@@ -18,6 +18,14 @@
     "cordis-plugin",
     "traditional-chinese-medicine"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JamisBian/dsh-jingfang.git"
+  },
+  "homepage": "https://github.com/JamisBian/dsh-jingfang#readme",
+  "bugs": {
+    "url": "https://github.com/JamisBian/dsh-jingfang/issues"
+  },
   "type": "module",
   "main": "lib/index.js",
   "exports": {

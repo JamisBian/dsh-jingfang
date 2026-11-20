@@ -2,7 +2,8 @@
 
 把「经方问诊」做成一个可执行的流程插件：**先问清楚，再辨证，查得到文献才开方**。
 
-**DSH Plugin**（`dsh.bundle.patch` + `dsh.client` 双面插件）· 适用于 DeepSeek Harness。
+**DSH Plugin**（`dsh.bundle.patch` + `dsh.client` 双面插件）· 适用于 DeepSeek Harness
+· 仓库：[github.com/JamisBian/dsh-jingfang](https://github.com/JamisBian/dsh-jingfang)
 
 **适用场景**：感冒发热、咳嗽咽痛、胃胀胃痛、腹泻便秘、失眠多梦、健忘乏力、头晕头痛、心悸胸闷、胁肋胀满、口干口苦、小便不利、水肿、关节疼痛、月经不调、痛经、更年期不适等——凡有明确「方证」可辨者，皆可用本插件走一遍问诊与核查。
 
@@ -46,24 +47,58 @@
 
 ## 安装
 
-插件包已声明 `dsh.bundle.patch` 与 `dsh.client`（浏览器端卡片），两种装法：
+插件包声明了 `dsh.bundle.patch`（宿主工具）与 `dsh.client`（浏览器端卡片），
+**没有构建步骤**——`lib/` 里就是可直接运行的 ESM 与手写 classic script，装完即用。
 
-**A. GUI（推荐）**：`Plugins → Add plugin → 选择本地目录`（选本仓库根目录，即含 `package.json` 的那一层）→ 装完点 **Enable now** → 按提示重载窗口。
+### A. 从 GitHub 仓库安装（推荐）
 
-**B. 命令行**（终端里，`DSH_HOME` 指向你实际在用的 profile 根）：
+官方仓库：**https://github.com/JamisBian/dsh-jingfang**
+
+**GUI**：侧边栏 **Plugins → Add plugin** → 粘贴任一写法：
+
+```
+https://github.com/JamisBian/dsh-jingfang
+github:JamisBian/dsh-jingfang
+JamisBian/dsh-jingfang
+```
+
+→ 点 **Install**，等 pnpm 拉取完成 → 在列表里对该插件选 **Enable now** → **重启应用**。
+
+**命令行**（`DSH_HOME` 指向你实际在用的 profile 根）：
 
 ```bash
 # Linux 原生 profile
-dsh plugin --profile web add /path/to/deepseek-harness-zhongyijingfang
+dsh plugin --profile web add github:JamisBian/dsh-jingfang
 
 # 桌面版（Windows 构建跑在 Wine 里，profile 在 Wine 的家目录）
 DSH_HOME="$HOME/.wine/drive_c/users/$USER/.dsh" \
-  dsh plugin --profile desktop add /path/to/deepseek-harness-zhongyijingfang
+  dsh plugin --profile desktop add github:JamisBian/dsh-jingfang
 ```
 
-`dsh plugin` 本质是在 profile 目录执行 `pnpm add`，成功后会把 `dsh-jingfang` 追加进 `dsh.profile.bundles`。装完**重启应用**（profile 在启动时组合）。
+装完 `dsh-jingfang` 会自动追加进 `dsh.profile.bundles`；**重启应用**后生效（profile 只在启动时组合）。
 
-> 本地用 `link:`/目录方式安装时不会按 `files` 过滤，所以 `lib/client.js` 一定在；走 registry 打包时 `files` 已包含 `lib`。
+> 从 git 安装时 pnpm 会走 `prepare` 构建脚本，本包没有 `prepare`、也没有依赖，
+> 正常不会触发 `allowBuilds` 提示。若你的 pnpm 版本仍拦了构建，按它打印的 key
+> 加到 profile 的 `pnpm-workspace.yaml` 的 `allowBuilds` 下即可。
+
+### B. 从本地路径安装（改代码时用）
+
+```bash
+# GUI：Plugins → Add plugin → 选仓库根目录（含 package.json 那一层）
+dsh plugin --profile web add /path/to/dsh-jingfang
+```
+
+本地 `link:`/目录安装不会按 `files` 过滤，改完代码重载窗口即生效。
+
+### C. 确认装好了
+
+```bash
+dsh --profile web --dump-config | grep dsh-jingfang   # 应能看到 jingfang 这一行
+```
+
+重启后输入框敲 `/`，菜单里应出现 **jingfang**；或直接说「我这两天头痛怕冷」。
+
+---
 
 ---
 
