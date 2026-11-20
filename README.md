@@ -88,7 +88,10 @@ DSH_HOME="$HOME/.wine/drive_c/users/$USER/.dsh" \
 dsh plugin --profile web add /path/to/dsh-jingfang
 ```
 
-本地 `link:`/目录安装不会按 `files` 过滤，改完代码重载窗口即生效。
+本地 `link:`/目录安装不会按 `files` 过滤，改完立刻取新文件——但**生效方式不同**：
+
+- 改 `lib/client.js`（卡片）：重载窗口即可
+- 改 `lib/tools.js`、`lib/engine/*`（宿主侧）：**必须完全退出并重启应用**，宿主插件在启动时载入，重载窗口不会重新 import
 
 ### C. 确认装好了
 

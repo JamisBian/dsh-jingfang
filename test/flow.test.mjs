@@ -631,3 +631,45 @@ test('病案导出：文件名清洗、空病历拒绝、未知方报错', async
 
   await rm(dir, { recursive: true, force: true })
 })
+
+test('会话标题：同名服务缺失/会话缺失时给出可诊断的原因', async () => {
+  const { syncSessionTitle, titleSyncLine } = await import('../lib/tools.js')
+  const record = { patient: { name: '张三' }, chief: '头痛' }
+
+  const noService = syncSessionTitle({ get: () => undefined }, { agent: { session: { id: 's' } } }, record)
+  assert.equal(noService.status, 'no-service')
+  assert.match(titleSyncLine(noService), /no-service/)
+
+  const noSession = syncSessionTitle({ get: () => ({ rename: () => {} }) }, {}, record)
+  assert.equal(noSession.status, 'no-session')
+
+  const boom = syncSessionTitle({ get: () => ({ rename: () => { throw new Error('session not live') } }) }, { agent: { session: { id: 's' } } }, record)
+  assert.equal(boom.status, 'error')
+  assert.match(boom.reason, /not live/)
+
+  const ok = syncSessionTitle({ get: () => ({ rename: () => {} }) }, { agent: { session: { id: 's' } } }, record)
+  assert.equal(ok.status, 'renamed')
+  assert.equal(ok.title, '张三·头痛')
+  assert.match(titleSyncLine(ok), /张三·头痛/)
+
+  assert.equal(syncSessionTitle({ get: () => undefined }, {}, { chief: '' }).status, 'skipped')
+})
+
+test('会话标题：问诊结果里带上标题同步状态', async () => {
+  const host = makeHost([
+    [
+      { id: 'name', selected: ['王五'] },
+      { id: 'age', selected: ['25-34 岁'] },
+      { id: 'sex', selected: ['男'] },
+      { id: 'chief', selected: ['咳嗽'] },
+      { id: 'duration', selected: ['一周内'] },
+      { id: 'context', selected: [] }
+    ]
+  ])
+  host.ctx.sessionTitle = { rename: () => {} }
+  apply(host.ctx)
+  const result = await run(host, 'jingfang_consult', { stage: 'intake' }, { agent: { session: { id: 's9' } } })
+  assert.equal(result.value.status, 'ok')
+  assert.equal(result.value.title_sync.status, 'renamed')
+  assert.match(result.text, /会话标题已设为「王五·咳嗽」/)
+})
