@@ -74,7 +74,7 @@ function resultBlock(toolName, argsMap, text) {
   }
 }
 
-test('client bundle 注册五个工具卡片', () => {
+test('client bundle 注册全部工具卡片', () => {
   const registration = loadBundle()
   assert.equal(registration.id, 'dsh-jingfang')
   const plugin = registration.factory((spec) => {
@@ -96,7 +96,15 @@ test('client bundle 注册五个工具卡片', () => {
 
   assert.deepEqual(
     Array.from(registered.map((r) => r.options.key)).sort(),
-    ['jingfang_consult', 'jingfang_differentiate', 'jingfang_discuss', 'jingfang_evidence', 'jingfang_formula', 'jingfang_prescribe']
+    [
+      'jingfang_consult',
+      'jingfang_differentiate',
+      'jingfang_discuss',
+      'jingfang_evidence',
+      'jingfang_export',
+      'jingfang_formula',
+      'jingfang_prescribe'
+    ]
   )
   assert.ok(registered.every((r) => r.options.name === 'tool.call.toolview'))
 })

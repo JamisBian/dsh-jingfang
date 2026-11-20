@@ -102,6 +102,21 @@ dsh --profile web --dump-config | grep dsh-jingfang   # 应能看到 jingfang �
 
 ---
 
+## 病案导出
+
+插件本身不落盘，病历只存在于会话记录里——删掉会话就没了。`jingfang_export` 解决留档：
+
+```
+~/中医病案/2026-11-20-张三.md
+```
+
+内容为「病史摘要 + 辨证结论 + 处方笺 + 医嘱」，同一患者复诊默认**追加**到同一文件，
+形成连续档案。文件名会自动清洗掉 `/ \ : * ? " < > |` 等字符。
+
+导出文件首行固定写入：
+
+> 本文件含个人健康信息，请妥善保管，勿随意转发或上传。
+
 ## 一个细节：没有「留空」这一说
 
 问到「还有什么要补充」这类开放题时，**空着提交会被界面拦住**。所以每道题都必须有选项——
@@ -339,7 +354,7 @@ lib/
     evidence.js      条文匹配 + PubMed（E-utilities）
     prescribe.js     处方笺
     discuss.js       质疑应对（禁忌/新信息/应答稿）
-test/                27 个引擎测试 + 16 个流程测试 + 5 个客户端卡片测试
+test/                27 个引擎测试 + 18 个流程测试 + 5 个客户端卡片测试
 scripts/check.mjs    包结构自检（bundle/client/id/exports 契约）
 scripts/coverage.mjs 金匮 22 篇覆盖度报告
 scripts/coverage-shanghan.mjs 伤寒六经覆盖度报告
@@ -356,7 +371,7 @@ docs/                插件客户端契约调研（0.2.2 实测，供二次开�
 
 ```bash
 node scripts/check.mjs     # 24 项包结构检查
-node --test test/*.test.mjs  # 52 个测试
+node --test test/*.test.mjs  # 57 个测试
 ```
 
 发布到插件仓库（默认 `../dsh-jingfang`）：

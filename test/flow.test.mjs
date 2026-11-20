@@ -79,6 +79,7 @@ test('插件导出契约', async () => {
     'jingfang_differentiate',
     'jingfang_discuss',
     'jingfang_evidence',
+    'jingfang_export',
     'jingfang_formula',
     'jingfang_prescribe'
   ])
@@ -558,4 +559,75 @@ test('会话标题：没有 sessionTitle 服务时不崩，也不影响问诊', 
   const result = await run(host, 'jingfang_consult', { stage: 'intake' }, { agent: { session: { id: 's3' } } })
   assert.equal(result.value.status, 'ok')
   assert.equal(result.value.case.chief, '胃痛')
+})
+
+test('病案导出：写入文件、可追加复诊、默认带隐私提示', async () => {
+  const { mkdtemp, readFile, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const path = await import('node:path')
+
+  const host = makeHost([])
+  apply(host.ctx)
+  const dir = await mkdtemp(path.join(tmpdir(), 'jingfang-'))
+  const record = {
+    patient: { name: '张三', age: 38, sex: '男' },
+    chief: '头痛',
+    symptoms: ['恶寒怕冷', '头痛'],
+    tongue: ['舌淡白'],
+    pulse: ['浮'],
+    allergy: '青霉素'
+  }
+
+  const first = await run(host, 'jingfang_export', { case: record, formula: '桂枝汤', pattern: '太阳中风证', advice: '避风，温服取微汗', dir })
+  assert.equal(first.value.status, 'ok')
+  assert.match(first.value.path, /2026-\d{2}-\d{2}-张三\.md$/)
+  assert.equal(first.value.appended, false)
+
+  const text = await readFile(first.value.path, 'utf8')
+  assert.match(text, /# 中医经方病案 · 张三/)
+  assert.match(text, /病史摘要/)
+  assert.match(text, /太阳中风证/)
+  assert.match(text, /处方笺/)
+  assert.match(text, /青霉素/) // 过敏史必须进病案
+  assert.match(text, /个人健康信息/)
+
+  // 复诊：追加到同一文件，形成连续档案
+  const second = await run(host, 'jingfang_export', { case: record, formula: '桂枝汤', dir })
+  assert.equal(second.value.status, 'ok')
+  assert.equal(second.value.appended, true)
+  const merged = await readFile(second.value.path, 'utf8')
+  assert.equal((merged.match(/## 就诊记录/g) ?? []).length, 1)
+  assert.match(second.value.message, /含个人健康信息/)
+
+  await rm(dir, { recursive: true, force: true })
+})
+
+test('病案导出：文件名清洗、空病历拒绝、未知方报错', async () => {
+  const { mkdtemp, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const path = await import('node:path')
+
+  const host = makeHost([])
+  apply(host.ctx)
+  const dir = await mkdtemp(path.join(tmpdir(), 'jingfang-'))
+
+  const odd = await run(host, 'jingfang_export', {
+    case: { patient: { name: '李四/王五:测试' }, chief: '胃痛', symptoms: ['胃脘疼痛'] },
+    dir
+  })
+  assert.equal(odd.value.status, 'ok')
+  assert.ok(!/[\\/:*?"<>|]/.test(path.basename(odd.value.path)), `文件名未清洗：${odd.value.path}`)
+
+  const empty = await run(host, 'jingfang_export', { case: {}, dir })
+  assert.equal(empty.value.status, 'error')
+
+  const unknown = await run(host, 'jingfang_export', {
+    case: { chief: '头痛', symptoms: ['头痛'] },
+    formula: '不存在汤',
+    dir
+  })
+  assert.equal(unknown.value.status, 'error')
+  assert.match(unknown.value.message, /找不到方剂/)
+
+  await rm(dir, { recursive: true, force: true })
 })
