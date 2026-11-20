@@ -12,7 +12,11 @@
     "jingfang",
     "经方",
     "伤寒论",
-    "金匮要略"
+    "金匮要略",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis-plugin",
+    "traditional-chinese-medicine"
   ],
   "type": "module",
   "main": "lib/index.js",
