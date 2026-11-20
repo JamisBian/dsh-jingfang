@@ -408,3 +408,98 @@ test('补充题可选「没有补充」，过敏史进入病历与处方警示',
   const sheet = await run(host, 'jingfang_formula', { name: '桂枝汤' })
   assert.equal(sheet.value.status, 'ok')
 })
+
+test('方族鉴别：四逆汤家族四个分支各归其方', async () => {
+  const branches = [
+    ['脸色发白、没血色', '四逆汤'],
+    ['脸发红（两颧像抹了胭脂），但身上并不怕冷', '通脉四逆汤'],
+    ['脸发红，人没精神、总想睡，还拉肚子', '白通汤'],
+    ['脸发红，心里烦、干呕，脉搏几乎摸不到', '白通加猪胆汁汤']
+  ]
+  for (const [label, expected] of branches) {
+    const host = makeHost([
+      [{ id: 'family_sini_daiyang', selected: [label] }],
+      [{ id: 'choose_formula', selected: [] }]
+    ])
+    apply(host.ctx)
+    const result = await run(host, 'jingfang_differentiate', {
+      case: {
+        patient: { name: '某', age: 60, sex: '男' },
+        chief: '腹泻、手足厥冷',
+        symptoms: ['腹泻', '手足厥冷', '脉微欲绝', '畏寒肢冷'],
+        tongue: ['舌淡白'],
+        pulse: ['微/弱']
+      }
+    })
+    assert.equal(result.value.status, 'decided', `${label}: ${result.value.message}`)
+    assert.equal(result.value.chosen.name, expected, `${label} 判成了 ${result.value.chosen.name}`)
+    // 第一次问的一定是家族鉴别题
+    assert.equal(host.asked[0].questions[0].id, 'family_sini_daiyang')
+  }
+})
+
+test('方族鉴别：承气汤家族也会触发', async () => {
+  const host = makeHost([
+    [{ id: 'family_chengqi', selected: ['肚子硬邦邦的，一按就疼，还不让按'] }],
+    [{ id: 'choose_formula', selected: [] }]
+  ])
+  apply(host.ctx)
+  const result = await run(host, 'jingfang_differentiate', {
+    case: {
+      patient: { name: '某', age: 45, sex: '男' },
+      chief: '便秘腹胀',
+      symptoms: ['便秘', '腹部胀满', '潮热', '大便干硬'],
+      tongue: ['苔黄'],
+      pulse: ['滑']
+    }
+  })
+  assert.equal(host.asked[0].questions[0].id, 'family_chengqi')
+  assert.equal(result.value.status, 'decided', result.value.message)
+  assert.ok(['大承气汤', '小承气汤'].includes(result.value.chosen.name))
+})
+
+test('家族鉴别：患者说「说不清」时退出，不硬套', async () => {
+  const host = makeHost([
+    [{ id: 'family_sini_daiyang', selected: ['说不清 / 都不像'] }],
+    [{ id: 'family_sini_pattern', selected: [] }],
+    [{ id: 'discriminate_2', selected: ['以上都没有'] }]
+  ])
+  apply(host.ctx)
+  const result = await run(host, 'jingfang_differentiate', {
+    case: {
+      patient: { name: '某', age: 60, sex: '男' },
+      chief: '腹泻、手足厥冷',
+      symptoms: ['腹泻', '手足厥冷', '脉微欲绝', '畏寒肢冷'],
+      tongue: ['舌淡白'],
+      pulse: ['微/弱']
+    }
+  })
+  // 家族题只问一次，不重复
+  const askedFamily = host.asked.filter((request) => request.questions.some((q) => q.id.startsWith('family_sini')))
+  assert.equal(askedFamily.length, 1, '「说不清」后仍在重复问家族题')
+  // 没有硬套方族：结果不是靠 boost 直接给定的
+  assert.ok(['need_more', 'decided'].includes(result.value.status))
+  if (result.value.status === 'need_more') {
+    assert.match(result.value.message, /说不清|不要再逼|客观症状/)
+  }
+})
+
+test('家族鉴别：泻心汤类也会触发且能定方', async () => {
+  const host = makeHost([
+    [{ id: 'family_xiexin', selected: ['打嗝带着食物的馊味，肚子咕咕响、拉肚子'] }],
+    [{ id: 'choose_formula', selected: [] }]
+  ])
+  apply(host.ctx)
+  const result = await run(host, 'jingfang_differentiate', {
+    case: {
+      patient: { name: '某', age: 40, sex: '男' },
+      chief: '胃脘痞满、嗳气',
+      symptoms: ['心下（胃脘）痞满', '嗳气（打嗝）', '肠鸣漉漉', '腹泻'],
+      tongue: ['苔黄腻'],
+      pulse: ['弦']
+    }
+  })
+  assert.equal(host.asked[0].questions[0].id, 'family_xiexin')
+  assert.equal(result.value.status, 'decided', result.value.message)
+  assert.equal(result.value.chosen.name, '生姜泻心汤')
+})

@@ -541,3 +541,55 @@ test('补录注家方证的 5 首：能辨证、证据标注为注家', async ()
     assert.equal(report.basis, '后世注家方证')
   }
 })
+
+test('宋本伤寒论：六经方剂基本补全', () => {
+  const byChannel = {}
+  for (const f of FORMULAS) byChannel[f.six] = (byChannel[f.six] ?? 0) + 1
+  const sixTotal = ['太阳', '阳明', '少阳', '太阴', '少阴', '厥阴', '霍乱', '差后'].reduce((n, k) => n + (byChannel[k] ?? 0), 0)
+  assert.ok(sixTotal >= 95, `伤寒六经仅 ${sixTotal} 首`)
+  assert.ok((byChannel['太阳'] ?? 0) >= 40, `太阳篇仅 ${byChannel['太阳']} 首`)
+  assert.ok((byChannel['少阴'] ?? 0) >= 14, `少阴篇仅 ${byChannel['少阴']} 首`)
+
+  // 抽查宋本中的关键方是否都在
+  const must = [
+    '桂枝去芍药汤', '桂枝麻黄各半汤', '桂枝二越婢一汤', '葛根加半夏汤', '干姜附子汤',
+    '桂枝甘草汤', '厚朴生姜半夏甘草人参汤', '芍药甘草附子汤', '茯苓四逆汤', '茯苓甘草汤',
+    '栀子甘草豉汤', '栀子生姜豉汤', '栀子干姜汤', '大陷胸汤', '大陷胸丸', '三物白散',
+    '柴胡加芒硝汤', '抵当汤', '抵当丸', '白通汤', '白通加猪胆汁汤', '通脉四逆汤',
+    '附子汤', '桃花汤', '甘草汤', '苦酒汤', '半夏散及汤', '猪肤汤', '麻黄升麻汤',
+    '干姜黄芩黄连人参汤', '桂枝加芍药汤', '桂枝加大黄汤', '四逆加人参汤', '枳实栀子豉汤',
+    '牡蛎泽泻散', '蜜煎导', '生姜泻心汤', '赤石脂禹余粮汤', '桂枝人参汤', '黄芩加半夏生姜汤'
+  ]
+  const names = new Set(FORMULAS.map((f) => f.name))
+  const missing = must.filter((n) => !names.has(n))
+  assert.deepEqual(missing, [], `仍缺：${missing.join('、')}`)
+})
+
+test('伤寒补遗 45 首：全部完成校准，能进自身方证的候选', async () => {
+  const auto = FORMULAS.filter((f) => f.autoPattern === true)
+  assert.equal(auto.length, 0, `仍有自动推导：${auto.map((f) => f.name).join('、')}`)
+
+  const extra = FORMULAS.filter((f) => String(f.id).endsWith('_sh'))
+  assert.ok(extra.length >= 45, `伤寒补遗仅 ${extra.length} 首`)
+  // 单症方（桂枝甘草汤、甘草汤、文蛤散）本来就只有一条主症，不强制两条
+  for (const f of extra) {
+    assert.ok(f.indicators.length >= 3, `${f.name} 指标过少`)
+    assert.ok(f.indicators.some((i) => i.w >= 3), `${f.name} 没有主症（w=3）`)
+    const ids = [...new Set(f.indicators.filter((i) => i.w >= 2).map((i) => i.id))]
+    const ranking = rankFormulas(normalizeCase({ symptoms: ids }))
+    const position = ranking.findIndex((entry) => entry.formula.id === f.id)
+    assert.ok(position >= 0 && position <= 4, `${f.name} 未进前五：${ranking.slice(0, 3).map((r) => r.formula.name).join('、')}`)
+  }
+})
+
+test('伤寒补遗方也接入了仲圣方证要诀的讲解', async () => {
+  const { patternDetail } = await import('../lib/data/pattern-detail.js')
+  let covered = 0
+  for (const f of FORMULAS.filter((x) => String(x.id).endsWith('_sh'))) {
+    const detail = patternDetail(f.id)
+    if (detail !== undefined && (detail.brief !== undefined || detail.function !== undefined)) covered += 1
+  }
+  assert.ok(covered >= 40, `仅有 ${covered} 首接入了方证讲解`)
+  const baitong = FORMULAS.find((x) => x.name === '白通汤')
+  assert.match(patternDetail(baitong.id).brief, /四肢厥冷|下利/)
+})
