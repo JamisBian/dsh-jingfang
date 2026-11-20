@@ -1,0 +1,410 @@
+// 端到端流程测试：用假 ctx 模拟「提问 → 患者作答」的完整接诊。
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+
+import { apply, name, inject } from '../lib/index.js'
+
+/** 造一个假 ctx：工具表 + 记录提问 + 按脚本作答。 */
+function makeHost(script) {
+  const registered = new Map()
+  const asked = []
+  const skills = []
+  let index = 0
+  const ctx = {
+    skills: {
+      register(definition) {
+        skills.push(definition)
+        return () => {}
+      }
+    },
+    effect(run) {
+      const disposer = run()
+      return disposer ?? (() => {})
+    },
+    tools: {
+      register(definition) {
+        registered.set(definition.name, definition)
+        return () => registered.delete(definition.name)
+      }
+    },
+    systemPrompt: {
+      section(section) {
+        ctx.sections.push(section)
+        return () => {}
+      }
+    },
+    sections: [],
+    userQuestions: {
+      async ask(request) {
+        asked.push(request)
+        const answer = script[index++]
+        if (answer === undefined) throw Object.assign(new Error('cancelled'), { code: 'ASK_CANCELLED' })
+        return { answers: answer }
+      }
+    },
+    get(service) {
+      return this[service]
+    }
+  }
+  return { ctx, registered, asked, skills }
+}
+
+/** 直接调用工具定义（绕过 registry，只测执行与渲染）。 */
+async function run(host, toolName, args) {
+  const definition = host.registered.get(toolName)
+  assert.ok(definition !== undefined, `工具未注册：${toolName}`)
+  const exec = { callId: `call-${Math.random().toString(16).slice(2)}`, signal: new AbortController().signal, arguments: args }
+  const value = await definition.execute(args, exec)
+  const content = definition.output.render(args, value)
+  return { value, text: content.map((block) => block.text).join('\n') }
+}
+
+const intakeAnswers = [
+  [
+    { id: 'name', selected: [], custom: '陈小明' },
+    { id: 'age', selected: ['31–45岁'] },
+    { id: 'sex', selected: ['男'] },
+    { id: 'chief', selected: ['感冒发热、咳嗽咽痛'], custom: '两天前淋雨受凉' },
+    { id: 'duration', selected: ['2–3天'] }
+  ]
+]
+
+test('插件导出契约', async () => {
+  assert.equal(name, 'dsh-jingfang')
+  assert.deepEqual(inject.required, ['tools', 'systemPrompt'])
+  const host = makeHost([])
+  apply(host.ctx)
+  assert.deepEqual([...host.registered.keys()].sort(), [
+    'jingfang_consult',
+    'jingfang_differentiate',
+    'jingfang_discuss',
+    'jingfang_evidence',
+    'jingfang_formula',
+    'jingfang_prescribe'
+  ])
+  assert.equal(host.ctx.sections[0].name, 'jingfang:workflow')
+  // 全局只留指引，完整流程在技能里
+  assert.match(host.ctx.sections[0].text, /jingfang/)
+  assert.equal(host.skills.length, 1)
+  const skill = host.skills[0]
+  assert.equal(skill.name, 'jingfang')
+  assert.equal(skill.invocation.modelInvocable, true)
+  assert.equal(skill.invocation.userInvocable, true)
+  assert.match(skill.content, /宁可多问一句/)
+})
+
+test('完整接诊流程：桂枝汤证', async () => {
+  const host = makeHost([
+    // intake
+    intakeAnswers[0],
+    // symptoms（寒热/汗/头身/胸腹/饮食）
+    [
+      { id: 'sym_cold_heat', selected: ['恶寒怕冷', '发热'] },
+      { id: 'sym_sweat', selected: ['自汗（动则汗出）'] },
+      { id: 'sym_head_body', selected: ['头痛'] },
+      { id: 'sym_chest_abdomen', selected: ['以上都没有'] },
+      { id: 'sym_digestion', selected: ['以上都没有'] }
+    ],
+    // symptoms2（二便/睡眠/咳喘/其他）
+    [
+      { id: 'sym_stool_urine', selected: ['以上都没有'] },
+      { id: 'sym_sleep_mind', selected: ['以上都没有'] },
+      { id: 'sym_respiratory', selected: ['鼻塞流涕'] },
+      { id: 'sym_other', selected: ['以上都没有'] }
+    ],
+    // signs
+    [
+      { id: 'sign_temp', selected: [], custom: '37.8' },
+      { id: 'sign_bp', selected: [], custom: '118/76' },
+      { id: 'sign_pulse', selected: [], custom: '82' },
+      { id: 'tongue', selected: ['舌淡红', '苔薄白'] },
+      { id: 'pulse', selected: ['浮', '微/弱'] },
+      { id: 'notes', selected: [], custom: '平时易出汗' }
+    ],
+    // differentiate：鉴别问题（无新增）+ 候选选择
+    [{ id: 'discriminate_1', selected: ['以上都没有'] }],
+    [{ id: 'choose_formula', selected: [] }]
+  ])
+  apply(host.ctx)
+
+  const intake = await run(host, 'jingfang_consult', { stage: 'intake' })
+  assert.equal(intake.value.status, 'ok')
+  assert.equal(intake.value.case.patient.name, '陈小明')
+  assert.match(intake.value.case.chief, /感冒发热/)
+  assert.match(intake.text, /```json/)
+  const caseJson = JSON.parse(intake.text.split('```json')[1].split('```')[0])
+  assert.equal(caseJson.patient.name, '陈小明')
+
+  const s1 = await run(host, 'jingfang_consult', { stage: 'symptoms', case: intake.value.case })
+  assert.equal(s1.value.status, 'ok')
+  assert.ok(s1.value.case.symptoms.includes('aversion_cold'))
+
+  const s2 = await run(host, 'jingfang_consult', { stage: 'symptoms2', case: s1.value.case })
+  assert.equal(s2.value.status, 'ok')
+  assert.ok(s2.value.case.symptoms.includes('nasal'))
+
+  const signs = await run(host, 'jingfang_consult', { stage: 'signs', case: s2.value.case })
+  assert.equal(signs.value.status, 'ok')
+  assert.equal(signs.value.case.vitals.tempC, 37.8)
+  assert.equal(signs.value.case.vitals.sbp, 118)
+  assert.deepEqual(signs.value.case.pulse, ['pulse_float', 'pulse_weak'])
+  assert.equal(signs.value.next_stage, '')
+
+  const diff = await run(host, 'jingfang_differentiate', { case: signs.value.case })
+  assert.equal(diff.value.status, 'decided', diff.value.message)
+  assert.equal(diff.value.chosen.id, 'guizhi_tang')
+  assert.ok(diff.value.ranking.length >= 1)
+  assert.ok(host.asked.some((request) => request.questions[0].id === 'choose_formula'))
+
+  const evidence = await run(host, 'jingfang_evidence', { case: diff.value.case, formula: '桂枝汤', online: false })
+  assert.equal(evidence.value.verdict, 'supported')
+  assert.ok(evidence.value.classic.length >= 1)
+  assert.match(evidence.text, /文献依据/)
+
+  const prescribe = await run(host, 'jingfang_prescribe', {
+    case: diff.value.case,
+    formula: '桂枝汤',
+    modifications: ['咳嗽加杏仁 9g'],
+    notes: '三剂后复诊',
+    online: false
+  })
+  assert.equal(prescribe.value.status, 'prescribed', prescribe.value.message)
+  assert.match(prescribe.text, /处方笺/)
+  assert.match(prescribe.text, /1 两 = 3 克/)
+  assert.match(prescribe.text, /免责声明|不能替代面诊/)
+})
+
+test('信息不足时拒绝给方', async () => {
+  const host = makeHost([
+    // 鉴别问题一律「以上都没有」
+    [{ id: 'discriminate_1', selected: ['以上都没有'] }],
+    [{ id: 'discriminate_2', selected: ['以上都没有'] }],
+    [{ id: 'discriminate_3', selected: ['以上都没有'] }]
+  ])
+  apply(host.ctx)
+  const tiny = {
+    patient: { name: '某', age: 30, sex: '女' },
+    chief: '有点累',
+    symptoms: ['fatigue'],
+    tongue: ['舌淡红'],
+    pulse: ['细']
+  }
+  const diff = await run(host, 'jingfang_differentiate', { case: tiny })
+  assert.notEqual(diff.value.status, 'decided')
+  assert.ok(['need_more', 'insufficient'].includes(diff.value.status), diff.value.status)
+  assert.match(diff.text, /不能定方|没有任何方证|需要继续提问/)
+})
+
+test('文献不足时开方被拦截', async () => {
+  const host = makeHost([[{ id: 'confirm_prescribe', selected: [] }]])
+  apply(host.ctx)
+  const caseData = {
+    patient: { name: '某', age: 30, sex: '女' },
+    chief: '咽痛',
+    symptoms: ['sore_throat'],
+    tongue: ['舌红'],
+    pulse: ['数']
+  }
+  const result = await run(host, 'jingfang_prescribe', { case: caseData, formula: '四逆汤', online: false })
+  assert.equal(result.value.status, 'blocked')
+  assert.ok(result.value.alternatives.length > 0)
+  assert.match(result.text, /不能开方/)
+})
+
+test('危险信号直接建议就医', async () => {
+  const host = makeHost([])
+  apply(host.ctx)
+  const result = await run(host, 'jingfang_prescribe', {
+    case: {
+      patient: { age: 68, sex: '男' },
+      symptoms: ['chest_pain', 'profuse_sweat'],
+      vitals: { tempC: 38.2, sbp: 190, dbp: 110, pulse: 132 }
+    },
+    formula: '桂枝汤',
+    online: false
+  })
+  assert.equal(result.value.status, 'emergency')
+  assert.match(result.text, /立即就医/)
+  assert.equal(host.asked.length, 0)
+})
+
+test('没有提问界面时退化为 manual', async () => {
+  const host = makeHost([])
+  delete host.ctx.userQuestions
+  apply(host.ctx)
+  const result = await run(host, 'jingfang_consult', { stage: 'intake' })
+  assert.equal(result.value.status, 'manual')
+  assert.ok(result.value.questions.length >= 3)
+  assert.match(result.text, /称呼/)
+})
+
+test('方剂详情与剂量折算', async () => {
+  const host = makeHost([])
+  apply(host.ctx)
+  const result = await run(host, 'jingfang_formula', { name: '小柴胡汤' })
+  assert.equal(result.value.status, 'ok')
+  assert.match(result.text, /柴胡/)
+  assert.match(result.text, /24g/)
+  const missing = await run(host, 'jingfang_formula', { name: '不存在的方' })
+  assert.equal(missing.value.status, 'not_found')
+})
+
+const guizhiCase = {
+  patient: { name: '张三', age: 35, sex: '男' },
+  chief: '感冒后头痛发热',
+  symptoms: ['aversion_wind', 'fever', 'spontaneous_sweat', 'headache', 'nasal'],
+  tongue: ['tongue_pink', 'coat_thin_white'],
+  pulse: ['pulse_float', 'pulse_weak'],
+  vitals: { tempC: 37.8, pulse: 82 }
+}
+
+test('质疑：依据不足时维持原判并追问依据', async () => {
+  const host = makeHost([
+    [{ id: 'objection_source', selected: ['网上/短视频看到的说法'] }],
+    [{ id: 'objection_concern', selected: ['药性太猛/有毒副作用'] }]
+  ])
+  apply(host.ctx)
+  const result = await run(host, 'jingfang_discuss', {
+    case: guizhiCase,
+    formula: '桂枝汤',
+    objection: '我在网上看到说这个方太热了，应该清热，不该用桂枝。',
+    online: false
+  })
+  assert.equal(result.value.status, 'maintain', result.value.message)
+  assert.match(result.value.markdown, /我的判断不变/)
+  assert.match(result.value.markdown, /原文依据/)
+  assert.match(result.value.markdown, /什么情况下我会改方/)
+  // 追问了两个依据类问题
+  assert.equal(host.asked.length, 1)
+  assert.equal(host.asked[0].questions.length, 2)
+  assert.equal(host.asked[0].questions[0].id, 'objection_source')
+  assert.ok(host.asked[0].questions[1].options.length >= 3)
+})
+
+test('质疑：提到妊娠禁忌时立即修正并认错', async () => {
+  const host = makeHost([])
+  apply(host.ctx)
+  const result = await run(host, 'jingfang_discuss', {
+    case: { ...guizhiCase, patient: { name: '李四', age: 31, sex: '女' } },
+    formula: '桃核承气汤',
+    objection: '我怀孕两个月了，这个方还能吃吗？',
+    online: false
+  })
+  assert.equal(result.value.status, 'revise')
+  assert.match(result.value.markdown, /我承认/)
+  assert.match(result.value.markdown, /妊娠/)
+  assert.ok(result.value.conflicts.length >= 1)
+  assert.ok(result.value.conflicts[0].herbs.length >= 1)
+})
+
+test('质疑：话里带新症状时重新辨证并改方', async () => {
+  const host = makeHost([])
+  apply(host.ctx)
+  const result = await run(host, 'jingfang_discuss', {
+    case: guizhiCase,
+    formula: '桂枝汤',
+    objection: '其实我还一直口苦、胁肋胀满、忽冷忽热、恶心想吐，是不是搞错了？',
+    online: false
+  })
+  assert.equal(result.value.status, 'revise', result.value.message)
+  assert.ok(result.value.new_findings.length >= 2)
+  assert.match(result.value.markdown, /我承认/)
+  assert.match(result.value.markdown, /修正后的判断/)
+})
+
+test('质疑：没有提问界面时退化为 manual', async () => {
+  const host = makeHost([])
+  delete host.ctx.userQuestions
+  apply(host.ctx)
+  const result = await run(host, 'jingfang_discuss', {
+    case: guizhiCase,
+    formula: '桂枝汤',
+    objection: '我觉得不对',
+    online: false
+  })
+  assert.equal(result.value.status, 'manual')
+  assert.equal(result.value.questions.length, 2)
+})
+
+test('辨证卡显示方证详解（patternDetail）', async () => {
+  const host = makeHost([
+    [{ id: 'choose_formula', selected: ['小柴胡汤（推荐）——68%'] }]
+  ])
+  apply(host.ctx)
+  const caseData = {
+    patient: { name: '李四', age: 42, sex: '女' },
+    chief: '忽冷忽热、口苦',
+    symptoms: ['alternating', 'bitter_mouth', 'hypochondriac', 'poor_appetite', 'nausea'],
+    tongue: ['coat_thin_white'],
+    pulse: ['pulse_wiry']
+  }
+  const diff = await run(host, 'jingfang_differentiate', { case: caseData })
+  assert.equal(diff.value.status, 'decided', diff.value.message)
+  assert.match(diff.text, /### 方证详解/)
+  assert.match(diff.text, /一句话方证/)
+  assert.match(diff.text, /功用/)
+  assert.match(diff.text, /往来寒热/)
+
+  const detail = await run(host, 'jingfang_formula', { name: '小柴胡汤' })
+  assert.match(detail.text, /方证详解/)
+  assert.match(detail.text, /清胆热/)
+})
+
+test('后世方：依据标注为手册方证，处方笺带提示', async () => {
+  const host = makeHost([[{ id: 'confirm_prescribe', selected: ['确认开方'] }]])
+  apply(host.ctx)
+  const caseData = {
+    patient: { name: '某', age: 45, sex: '女' },
+    chief: '失眠多梦、易惊',
+    symptoms: ['insomnia', 'dreamy_sleep', 'nausea', 'palpitation', 'anxiety', 'dizziness'],
+    tongue: ['coat_yellow_greasy'],
+    pulse: ['pulse_slippery']
+  }
+  const detail = await run(host, 'jingfang_formula', { name: '温胆汤' })
+  assert.equal(detail.value.status, 'ok')
+  assert.match(detail.text, /后世方|手册/)
+
+  const evidence = await run(host, 'jingfang_evidence', { case: caseData, formula: '温胆汤', online: false })
+  assert.equal(evidence.value.verdict, 'supported', evidence.value.message)
+  assert.match(evidence.text, /依据类型：手册方证/)
+
+  const prescribed = await run(host, 'jingfang_prescribe', { case: caseData, formula: '温胆汤', online: false })
+  assert.equal(prescribed.value.status, 'prescribed', prescribed.value.message)
+  assert.match(prescribed.text, /后世方\/经验方/)
+})
+
+test('每道问诊题都必须有选项（否则空提交会被界面拦住）', async () => {
+  const { questionsFor, STAGES } = await import('../lib/questions.js')
+  for (const stage of STAGES) {
+    for (const question of questionsFor(stage)) {
+      assert.ok(
+        Array.isArray(question.options) && question.options.length > 0,
+        `阶段 ${stage} 的「${question.header ?? question.id}」没有选项，用户无法提交`
+      )
+    }
+  }
+})
+
+test('补充题可选「没有补充」，过敏史进入病历与处方警示', async () => {
+  const { questionsFor, applyAnswers } = await import('../lib/questions.js')
+  const { emptyCase } = await import('../lib/engine/case.js')
+  const notes = questionsFor('signs').find((q) => q.id === 'notes')
+  assert.ok(notes.options.some((o) => o.label === '没有补充'))
+
+  // 只选「没有补充」：可以提交，且不产生任何补充信息
+  const plain = applyAnswers(emptyCase(), [{ id: 'notes', selected: ['没有补充'], custom: '' }])
+  assert.equal(plain.notes, '')
+  assert.equal(plain.allergy, '')
+
+  // 选过敏史 + 自定义：过敏史单独成字段
+  const allergic = applyAnswers(emptyCase(), [
+    { id: 'notes', selected: ['有药物过敏史', '正在服用西药或中成药'], custom: '磺胺类' }
+  ])
+  assert.equal(allergic.allergy, '磺胺类')
+  assert.match(allergic.notes, /正在服用西药/)
+
+  const host = makeHost([])
+  apply(host.ctx)
+  const sheet = await run(host, 'jingfang_formula', { name: '桂枝汤' })
+  assert.equal(sheet.value.status, 'ok')
+})

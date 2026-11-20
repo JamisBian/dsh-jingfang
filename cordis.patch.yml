@@ -1,0 +1,5 @@
+# dsh-jingfang bundle patch: one insert row registering the dual-face plugin.
+# The row name must match the npm package name and the host half's exported `name`.
+- insert:
+    - id: jingfang
+      name: 'dsh-jingfang'
