@@ -50,10 +50,10 @@ function makeHost(script) {
 }
 
 /** 直接调用工具定义（绕过 registry，只测执行与渲染）。 */
-async function run(host, toolName, args) {
+async function run(host, toolName, args, extra = {}) {
   const definition = host.registered.get(toolName)
   assert.ok(definition !== undefined, `工具未注册：${toolName}`)
-  const exec = { callId: `call-${Math.random().toString(16).slice(2)}`, signal: new AbortController().signal, arguments: args }
+  const exec = { callId: `call-${Math.random().toString(16).slice(2)}`, signal: new AbortController().signal, arguments: args, ...extra }
   const value = await definition.execute(args, exec)
   const content = definition.output.render(args, value)
   return { value, text: content.map((block) => block.text).join('\n') }
@@ -502,4 +502,60 @@ test('家族鉴别：泻心汤类也会触发且能定方', async () => {
   assert.equal(host.asked[0].questions[0].id, 'family_xiexin')
   assert.equal(result.value.status, 'decided', result.value.message)
   assert.equal(result.value.chosen.name, '生姜泻心汤')
+})
+
+test('会话标题：采集到姓名与主诉后改成「姓名·主诉」', async () => {
+  const renames = []
+  const host = makeHost([
+    [
+      { id: 'name', selected: ['张三'] },
+      { id: 'age', selected: ['35-44 岁'] },
+      { id: 'sex', selected: ['女'] },
+      { id: 'chief', selected: ['头痛'] },
+      { id: 'duration', selected: ['一周内'] },
+      { id: 'context', selected: [] }
+    ]
+  ])
+  // 补上 sessionTitle 服务与 agent.session，模拟真实调用环境
+  host.ctx.sessionTitle = { rename: (session, title) => renames.push([session, title]) }
+  const agent = { session: { id: 's1' } }
+  apply(host.ctx)
+  const result = await run(host, 'jingfang_consult', { stage: 'intake' }, { agent })
+  assert.equal(result.value.status, 'ok')
+  assert.deepEqual(renames, [[agent.session, '张三·头痛']])
+})
+
+test('会话标题：不留名时用「患者·主诉」', async () => {
+  const renames = []
+  const host = makeHost([
+    [
+      { id: 'name', selected: ['不方便留名'] },
+      { id: 'age', selected: ['25-34 岁'] },
+      { id: 'sex', selected: ['男'] },
+      { id: 'chief', selected: ['失眠'] },
+      { id: 'duration', selected: ['一周内'] },
+      { id: 'context', selected: [] }
+    ]
+  ])
+  host.ctx.sessionTitle = { rename: (session, title) => renames.push(title) }
+  apply(host.ctx)
+  await run(host, 'jingfang_consult', { stage: 'intake' }, { agent: { session: { id: 's2' } } })
+  assert.deepEqual(renames, ['患者·失眠'])
+})
+
+test('会话标题：没有 sessionTitle 服务时不崩，也不影响问诊', async () => {
+  const host = makeHost([
+    [
+      { id: 'name', selected: ['李四'] },
+      { id: 'age', selected: ['45-54 岁'] },
+      { id: 'sex', selected: ['男'] },
+      { id: 'chief', selected: ['胃痛'] },
+      { id: 'duration', selected: ['一周内'] },
+      { id: 'context', selected: [] }
+    ]
+  ])
+  apply(host.ctx)
+  const result = await run(host, 'jingfang_consult', { stage: 'intake' }, { agent: { session: { id: 's3' } } })
+  assert.equal(result.value.status, 'ok')
+  assert.equal(result.value.case.chief, '胃痛')
 })
