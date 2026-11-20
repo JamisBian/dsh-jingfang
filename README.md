@@ -320,6 +320,18 @@ node scripts/check.mjs     # 24 项包结构检查
 node --test test/*.test.mjs  # 52 个测试
 ```
 
+发布到插件仓库（默认 `../dsh-jingfang`）：
+
+```bash
+./scripts/sync-to-repo.sh                  # 同步 → 目标仓库内跑测试 → 提交 → 推送
+./scripts/sync-to-repo.sh -m "改了什么"     # 自定义提交说明
+./scripts/sync-to-repo.sh --dry-run        # 先看会同步哪些文件
+./scripts/sync-to-repo.sh --no-push        # 只提交不推送
+```
+
+脚本会在**目标仓库里**重跑测试与包检查，不过就中止提交——不会把坏代码推上去；
+无变更时直接退出，不产生空提交。
+
 ---
 
 ## 已知边界
