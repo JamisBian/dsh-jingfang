@@ -222,3 +222,35 @@ test('失败结果渲染失败态', () => {
   })
   assert.match(flatten(element), /失败/)
 })
+
+test('病案导出卡片：能从结果里取出路径并给出复制按钮', () => {
+  const registration = loadBundle()
+  const plugin = registration.factory(() => fakeReact)
+  const registered = []
+  plugin.apply({
+    slots: { inject: (_n, cb) => cb(), register: (options, Component) => registered.push({ options, Component }) }
+  })
+  const card = registered.find((r) => r.options.key === 'jingfang_export').Component
+  const body = [
+    '## 病案已导出',
+    '',
+    '- 文件：`/home/bian/中医病案/2026-11-20-张三.md`',
+    '- ⚠️ 含个人健康信息，请妥善保管'
+  ].join('\n')
+  const element = card({
+    toolName: 'jingfang_export',
+    phase: 'result',
+    block: resultBlock('jingfang_export', { filename: '2026-11-20-张三.md' }, body)
+  })
+  const text = flatten(element)
+  assert.match(text, /复制文件路径/, '导出卡片没有出现复制按钮')
+  assert.match(text, /2026-11-20-张三\.md/)
+
+  // 没有路径时不渲染按钮
+  const plain = card({
+    toolName: 'jingfang_export',
+    phase: 'result',
+    block: resultBlock('jingfang_export', {}, '## 导出失败\n\n磁盘只读')
+  })
+  assert.doesNotMatch(flatten(plain), /复制文件路径/)
+})
