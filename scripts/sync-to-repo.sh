@@ -23,7 +23,7 @@ DO_PUSH=1
 DRY_RUN=0
 
 # 需要同步的顶层条目（新增顶层文件时记得加到这里）
-ITEMS=(lib scripts test docs data README.md package.json cordis.patch.yml LICENSE)
+ITEMS=(lib scripts test docs data README.md package.json cordis.patch.yml LICENSE .gitignore)
 # 永不覆盖/删除的东西
 EXCLUDES=(.git node_modules .scratch .probe.txt)
 

@@ -1,0 +1,16 @@
+# 忽略所有点开头的文件/目录
+# 原因：DSH 会话与调试产物多为点文件（.probe.txt、.tmp-consult/、.scratch/、.dsh-drop/），
+# 曾因误提交整个工作区把它们带进历史。
+.*
+
+# 但仓库本身需要跟踪的点文件，逐个放行
+!.gitignore
+!.gitattributes
+!.github/
+!.editorconfig
+!.env.example
+
+# 其它常见噪声
+node_modules/
+*.log
+.DS_Store
