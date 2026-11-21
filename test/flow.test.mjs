@@ -673,3 +673,91 @@ test('会话标题：问诊结果里带上标题同步状态', async () => {
   assert.equal(result.value.title_sync.status, 'renamed')
   assert.match(result.text, /会话标题已设为「王五·咳嗽」/)
 })
+
+test('合方：相容的两方可以合成一首，重复度过高的两方被拒', async () => {
+  const { combineCheck, buildCombined } = await import('../lib/engine/combine.js')
+  const { resolveFormula } = await import('../lib/data/index.js')
+
+  const ok = combineCheck(resolveFormula('桂枝汤'), resolveFormula('小柴胡汤'))
+  assert.notEqual(ok.level, 'block', ok.reasons.join('；'))
+  const merged = buildCombined(resolveFormula('桂枝汤'), resolveFormula('小柴胡汤'))
+  assert.equal(merged.name, '桂枝汤合小柴胡汤')
+  assert.equal(merged.combined, true)
+  assert.equal(merged.composition.length, 9) // 5 + 7 - 3 味共有
+  assert.ok(merged.indicators.length >= 15)
+
+  const dup = combineCheck(resolveFormula('桂枝汤'), resolveFormula('桂枝加葛根汤'))
+  assert.equal(dup.level, 'block')
+  assert.match(dup.reasons.join('；'), /药味重复/)
+
+  const self = combineCheck(resolveFormula('桂枝汤'), resolveFormula('桂枝汤'))
+  assert.equal(self.level, 'block')
+})
+
+test('合方：十八反与毒性叠加分别拦住 / 提示', async () => {
+  const { combineCheck } = await import('../lib/engine/combine.js')
+  const fake = (name, herbs) => ({ id: name, name, composition: herbs.map((h) => ({ herb: h, text: '9g' })) })
+
+  const reverse = combineCheck(fake('甲', ['甘草', '桂枝']), fake('乙', ['甘遂', '大枣']))
+  assert.equal(reverse.level, 'block')
+  assert.match(reverse.reasons.join('；'), /十八反/)
+
+  const toxic = combineCheck(fake('丙', ['附子', '干姜']), fake('丁', ['附子', '甘草']))
+  assert.equal(toxic.level, 'caution')
+  assert.match(toxic.reasons.join('；'), /毒性叠加/)
+})
+
+test('分差很小时给出合方 / 取最优的选项', async () => {
+  const host = makeHost([])
+  apply(host.ctx)
+  const { describeCloseCall } = await import('../lib/tools.js')
+  const ranking = [
+    { formula: { id: 'a', name: '桂枝汤', composition: [{ herb: '桂枝' }, { herb: '芍药' }] }, score: 0.7 },
+    { formula: { id: 'b', name: '小柴胡汤', composition: [{ herb: '柴胡' }, { herb: '黄芩' }] }, score: 0.68 },
+    { formula: { id: 'c', name: '麻黄汤', composition: [{ herb: '麻黄' }] }, score: 0.4 }
+  ]
+  const close = describeCloseCall(ranking)
+  assert.ok(close !== undefined)
+  assert.equal(close.gap, 2)
+  assert.ok(close.options.includes('combine'))
+  assert.ok(close.options.includes('pick_best'))
+
+  // 分差够大时不提示
+  assert.equal(describeCloseCall([{ ...ranking[0], score: 0.9 }, { ...ranking[1], score: 0.5 }]), undefined)
+})
+
+test('医师强制开方口令：默认关闭，配置后才生效', async () => {
+  const phrase = '本机专用口令-测试'
+  const setup = (config) => {
+    const host = makeHost([
+      [{ id: 'confirm_prescribe', selected: ['确认开方'] }],
+      [{ id: 'confirm_prescribe', selected: ['确认开方'] }]
+    ])
+    apply(host.ctx, config)
+    return host
+  }
+  const record = {
+    patient: { name: '某', age: 40, sex: '男' },
+    chief: '头痛',
+    symptoms: ['头痛', '恶寒怕冷'],
+    tongue: ['舌淡白'],
+    pulse: ['浮']
+  }
+
+  // 未配置：口令无效，仍然被文献门槛拦住
+  const off = setup({})
+  const blocked = await run(off, 'jingfang_prescribe', { case: record, formula: '天雄散', clinician_override: phrase, online: false })
+  assert.equal(blocked.value.status, 'blocked')
+
+  // 配置了：口令正确则出方，且处方笺顶部有强制开方警示
+  const on = setup({ overridePhrase: phrase })
+  const forced = await run(on, 'jingfang_prescribe', { case: record, formula: '天雄散', clinician_override: phrase, online: false })
+  assert.equal(forced.value.status, 'prescribed', forced.value.message)
+  assert.match(forced.value.markdown, /医师强制开方/)
+  assert.match(forced.value.markdown, /天雄散/)
+
+  // 口令错误：仍被拦住
+  const wrong = setup({ overridePhrase: phrase })
+  const stillBlocked = await run(wrong, 'jingfang_prescribe', { case: record, formula: '天雄散', clinician_override: '瞎猜的', online: false })
+  assert.equal(stillBlocked.value.status, 'blocked')
+})

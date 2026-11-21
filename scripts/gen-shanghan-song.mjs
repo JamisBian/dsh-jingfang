@@ -88,27 +88,62 @@ const wf = new Map()
   }
 }
 
-/** 「桂枝三两（9g）」「甘遂一钱匕（1.5g）」「葱白四茎」→ {herb,text} */
+/** 炮制后缀，解析药名时剥掉。 */
+const PREP = /(炮制|炮|生用|生|炙|炒|煅|酒洗|汤洗|去皮|去心|去芦|去节|切|擘|碎|打碎|研|洗)+$/
+
+/**
+ * 王付【方药】的真实写法是「药名炮制，再，剂量（克数）」：
+ *   附子炮，去皮，破八片二枚（10g ）   桂枝去皮，三两（9g）   大枣擘，十二枚
+ * 所以按空格切词后：克数取括号、药名取第一个逗号前、剂量取词尾的数字+单位。
+ */
 function parseDose(raw) {
   const out = []
-  const re = /([\u4e00-\u9fa5]{1,6}?)\s*(?:[^（(\s]*?)?([一二三四五六七八九十百\d.]+)\s*(两|铢|枚|升|合|钱匕|钱|茎|个|片|把|具)?\s*(?:[（(]([\d.]+)\s*g[）)])?/g
-  let m
-  while ((m = re.exec(String(raw))) !== null) {
-    const herb = m[1]
-    if (herb === undefined || herb.length < 1 || /^(上|右|以|水|煮|取|内|去|温|服|分|若|加|各|方|右|味)$/.test(herb)) continue
-    const grams = m[4]
-    const unit = m[3] ?? ''
-    if (grams !== undefined) out.push({ herb, text: `${grams}g` })
-    else if (m[2] !== undefined && unit !== '') out.push({ herb, text: `${m[2]}${unit}` })
-  }
-  // 去重（同药只留第一次）
   const seen = new Set()
-  return out.filter((p) => (seen.has(p.herb) ? false : (seen.add(p.herb), true)))
+  const text = String(raw).replace(/[（(]\s*/g, '（').replace(/\s*[）)]/g, '）')
+  for (const token of text.split(/[\s　]+/)) {
+    const piece = token.trim()
+    if (piece === '') continue
+    const grams = /（([\d.]+)\s*g）/.exec(piece)
+    const body = piece.replace(/（[^）]*）/g, '')
+    if (body === '') continue
+    const dose = /([\d一二三四五六七八九十百半]+)\s*(两|铢|枚|升|合|钱匕|钱|茎|个|片|把|具|分|斤)?\s*$/.exec(body)
+    if (dose === null) continue
+    const head = body.slice(0, dose.index).split(/[，,]/)[0]
+    const herb = head.replace(PREP, '').trim()
+    if (herb.length < 1 || herb.length > 6) continue
+    if (/^(上|右|以|水|煮|取|内|去|温|服|分|若|加|各|方|味)$/.test(herb)) continue
+    if (seen.has(herb)) continue
+    seen.add(herb)
+    out.push({ herb, text: grams === null ? `${dose[1]}${dose[2] ?? '分'}` : `${grams[1]}g` })
+  }
+  return out
 }
 
-// 排除本脚本上次生成的条目，避免重跑时把自己当成「已存在」
+/** 已在 formulas-shanghan-manual.js 手工写定的方，一律不重复生成。 */
+const MANUAL = new Set([
+  '桂枝新加汤',
+  '厚朴生姜半夏甘草人参汤',
+  '大陷胸丸',
+  '三物白散',
+  '蜜煎导',
+  '半夏散及汤',
+  '猪肤汤',
+  '当归四逆加吴茱萸生姜汤',
+  '干姜黄芩黄连人参汤',
+  '桂枝加大黄汤',
+  '牡蛎泽泻散',
+  '生姜泻心汤',
+  '赤石脂禹余粮汤',
+  '桂枝人参汤',
+  '黄芩加半夏生姜汤'
+])
+
+// 本脚本上次生成的条目（中文名 + _sh）要从 have 里排掉，否则重跑会把自己当成「已存在」；
+// 手工补录的方是拼音 id（如 daxianxiong_wan_sh），必须保留。
+const isGenerated = (x) => /^[\u4e00-\u9fa5].*_sh$/.test(String(x.id))
+
 const have = new Set()
-for (const f of FORMULAS.filter((x) => !String(x.id).endsWith('_sh'))) {
+for (const f of FORMULAS.filter((x) => !isGenerated(x))) {
   have.add(f.name.replace(/（.*?）/g, ''))
   if (f.alias !== undefined) have.add(f.alias)
 }
@@ -117,7 +152,7 @@ const generated = []
 const skipped = []
 for (const [six, names] of Object.entries(SONG)) {
   for (const name of names) {
-    if (have.has(name)) continue
+    if (have.has(name) || MANUAL.has(name)) continue
     const wfName = ALIAS[name] ?? name
     const wangfu = wf.get(wfName) ?? wf.get(name)
     const clause = clauses.get(wfName) ?? clauses.get(name)
@@ -145,6 +180,7 @@ for (const [six, names] of Object.entries(SONG)) {
       six,
       doseBasis: 'modern',
       autoPattern: true,
+      generated: true,
       composition,
       decoction: wangfu?.fields['用法'] ?? '水煎，分温再服。',
       pattern: (zheng.split(/[。；]/).filter((s) => s.trim() !== '').slice(0, 4).length > 0
